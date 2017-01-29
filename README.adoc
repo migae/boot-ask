@@ -1,0 +1,107 @@
+= boot-ask
+
+Boot task lib for  https://developer.amazon.com/alexa[Alexa] development.
+
+Amazon's Alexa is essentially a voice API. It translates voice
+commands to JSON request messages, which it delegates to your
+implementations.
+
+You can deploy a "skill" (i.e. the code that implements a voice
+command) to the AWS Lambda service, but you can also deploy it to any
+web service that understands HTTP. In particular, you can deploy Alexa
+skills written in Clojure to Google App Engine.
+
+The `boot-ask` task library makes it easy to code, test, and deploy
+Alexa skills written in 100% Clojure.
+
+== getting started
+
+```
+    [migae/boot-ask "0.1.0-SNAPSHOT" :scope "test"]
+```
+
+For examples, see https://github.com/migae/boot-ask-examples[boot-ask-examples]
+
+=== deployment platforms
+
+Documentation:
+
+* link:doc/lambda.adoc[AWS Lambda]
+
+* link:doc/gae.adoc[Google App Engine]
+
+
+
+= testing
+
+Here is a generic Checklist; see platform-specific documentation for more specific guidance.
+
+* Turn off security.
+** Set system property `com.amazon.speech.speechlet.servlet.disableRequestSignatureCheck` to true.
+** Make sure system property `com.amazon.speech.speechlet.servlet.supportedApplicationIds` is blank. This turns off application ID verification.
+
+* Instrument your code with log messages to trace processing. I.e. include something like the following at the beginning of your `com.amazon.speech.speechlet.Speechlet API` delegate functions:
+
+[source,clojure]
+----
+(defn speechlet-onIntent
+  ^SpeechletResponse
+  [this, ^IntentRequest request, ^Session session]
+  (log/info (format "onIntent requestId=%s, sessionId=%s"
+                    (.getRequestId request)
+                    (.getSessionId session)))
+ ...)
+----
+
+* Create a test request for your skill. This will be a JSON doc that looks something like the following. The format is documented at https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/alexa-skills-kit-interface-reference[JSON Interface Reference for Custom Skills].
+
+[source,json]
+----
+{
+    "session": {
+	"sessionId": "testsessionId123",
+	"application": {
+	    "applicationId": "amzn1.ask.skill.foo-bar"
+	},
+	"attributes": {},
+	"user": {
+	    "userId": "user123"
+	},
+	"new": true
+    },
+    "request": {
+	"type": "IntentRequest",
+	"requestId": "test.request.id.123",
+	"locale": "en-US",
+	"timestamp": "2017-01-29T06:41:59Z",
+	"intent": {
+	    "name": "HelloWorldIntent",
+	    "slots": {}
+	}
+    },
+    "version": "1.0"
+}
+----
+
+* Use `curl` (or any other HTTP client tool) to `POST` the request to your service, e.g. in upload.sh:
+
+[source,sh]
+----
+#!/bin/bash
+curl --insecure --data-binary @$1 localhost:8080/goodbye
+----
+
+Then post your test JSON: `$ ./upload.sh testhello.json`
+
+* If you are developing for GAE, you can interactively test-and-dev;
+  for details see link:doc/gae.adoc[Alexa/Clojure on GAE].
+
+=== amazon docs
+
+* https://developer.amazon.com/alexa-skills-kit[Alexa Skills Kit]
+
+* https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/handling-requests-sent-by-alexa[Handling Requests Sent by Alexa]
+
+* https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/alexa-skills-kit-interface-reference[JSON Interface Reference for Custom Skills]
+
+* https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/custom-standard-request-types-reference#intentrequest[Standard Request Types Reference]

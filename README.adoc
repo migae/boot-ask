@@ -5,7 +5,7 @@ Boot task lib for  https://developer.amazon.com/alexa[Alexa] development.
 The `boot-ask` task library makes it easy to code, test, and deploy
 Alexa skills written in 100% Clojure. You can deploy to AWS Lambda,
 but used in conjunction with the
-https://github.com/migae/boot-gae[migae/boot-gae] library, `boot-ask` makes it
+https://github.com/migae/boot-gae[migae/boot-gae] library, `boot-ask` also makes it
 easy to target Google App Engine for development and/or deployment.
 Even if you plan to deploy to Lambda, you can develop and test on the
 local GAE dev server and get quasi-REPL interactivity.
@@ -164,7 +164,9 @@ creates and aot-compiles gen-class code like the following:
 IMPORTANT: To target Google App Engine, use
 https://github.com/migae/boot-gae[boot-gae] in conjunction with
 `boot-ask`. The tasks in `boot-gae` will automatically configure the
-application for the GAE environment.
+application for the GAE environment. See
+https://github.com/migae/boot-ask-examples/hello[boot-ask-examples/hello]
+for an example.
 
 The application must extend
 `com.amazon.speech.speechlet.servlet.SpeechletServlet`. When the

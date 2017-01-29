@@ -12,9 +12,21 @@ web service that understands HTTP. In particular, you can deploy Alexa
 skills written in Clojure to Google App Engine.
 
 The `boot-ask` task library makes it easy to code, test, and deploy
-Alexa skills written in 100% Clojure.
+Alexa skills written in 100% Clojure. Used in conjunction with the
+https://github.com/migae/boot-gae[migae/boot-gae] library, it makes it
+easy to target Google App Engine for development and/or deployment.
+Even if you plan to deploy to Lambda, you can develop and test on the
+local GAE dev server and get quasi-REPL interactivity.
 
 == getting started
+
+IMPORTANT: This documentation assumes some familiarity with Alexa
+skills development. If you're just getting started with Alexa, you
+should work through some of the examples at https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/using-the-alexa-skills-kit-samples[Using the Alexa Skills Kit Samples (Custom Skills)].  See for example
+https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/overviews/understanding-custom-skills[Understanding
+Custom Skills]
+
+Not yet deployed to clojars.
 
 ```
     [migae/boot-ask "0.1.0-SNAPSHOT" :scope "test"]

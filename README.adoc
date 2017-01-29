@@ -27,7 +27,13 @@ https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/using-
 the Alexa Skills Kit Samples (Custom Skills)]. Then you'll see how
 easy things are with boot-ask in comparison.
 
+*Stable*
+
 Not yet deployed to clojars.
+
+*Unstable*
+
+Fork/clone, then build and install: `$ boot pom jar install`
 
 ```
     [migae/boot-ask "0.1.0-SNAPSHOT" :scope "test"]
@@ -35,7 +41,169 @@ Not yet deployed to clojars.
 
 For examples, see https://github.com/migae/boot-ask-examples[boot-ask-examples]
 
-=== deployment platforms
+= principles
+
+Using `boot-ask` to develop Alexa skills requires the following steps:
+
+1. _Declare_ an Alexa skill.  Currently you must do this through the Amazon developer website.
+2. _Define_ a speechlet that implements the skill. With `boot-ask` you
+can to this in Clojure or Java. With Clojure, all you have to do is
+implement a speechlet _delegate_ that implements the
+`com.amazon.speech.speechlet.Speechlet` API.
+3. _Inject_ an instance of your speechlet into the wrapper object
+appropriate to the container you target (Lambda or a servlet
+container).
+
+=== speechlets
+
+The implementation of a skill is an implementation of the Java
+interface `com.amazon.speech.speechlet.Speechlet`. `boot-ask`
+automates the use of `gen-class` to do this, producing something like:
+
+[source,clojure]
+----
+(ns speechletsgen2469)
+
+(gen-class :name hello.speechlet
+           :implements [com.amazon.speech.speechlet.Speechlet]
+           :prefix speechlet-
+           :impl-ns hello.speechlet.delegate)
+----
+
+The `ask/speechlets` task generates this file from an EDN
+specification file; it also aot-compiles the file, producing a Java
+`.class` file on disk. Strictly speaking, that class file is the
+implementation of `Speechlet`; the implementation is effectively a
+delegation mechanism, created by `gen-class`, that will forward
+invocations on the interface methods to the _delegate_ namespace
+specified by `:impl-ns`. The programmer must provide the corresponding
+Clojure file, with appropriately named functions for the methods.
+
+In summary with `boot-ask` you write a `speechlets.edn` file that
+looks like this:
+
+[source,clojure]
+----
+{:speechlets [{:ns hello.speechlet
+               :delegate {:ns hello.speechlet.delegate
+                          :prefix "speechlet-"}
+               :servlet  {:ns hello.speechlet.servlet
+                          :urls ["/hello"]}
+               :name "HelloFunction"
+               :skill {:id "... alexa skill application id goes here..."}
+               :lambda {:handler {:ns hello.speechlet.handler}
+                        ;; :method [handleRequest [String] String]}
+                        :memory 512
+                        :timeout 5
+                        :role "arn:aws:iam::133382873287:role/boot-lambda-basic"}
+               :logging {:level :all}
+               :intents {:Intent/Hello #{"say hello"
+                                         "say hello world"
+                                         "hello"
+                                         "say hi"
+                                         "say hi world"
+                                         "hi"
+                                         "how are you"}
+                         :Intent/AMAZON.HelpIntent #{}
+                         }
+               }
+ ...}
+----
+
+The speechlet delegate will look like this:
+
+[source,clojure]
+----
+(ns hello.speechlet.delegate
+  ...)
+...
+(defn speechlet-onSessionStarted ...)
+(defn speechlet-onLaunch ...)
+(defn speechlet-onIntent ...)
+(defn speechlet-onSessionEnded ...)
+----
+
+=== wrappers
+
+A second component is required to enable the speechlet.  Speechlets
+execute in a _container_ environment: either AWS Lambda or a servlet
+container such as Google App Engine or Tomcat. In either case, the
+speechlet must be wrapped in a component that will dispatch incoming
+requests to the speechlet methods. `boot-ask` automates all of this.
+
+NOTE: The same codebase is used for all container environments. You
+select a container by using the appropriate boot task pipeline.
+
+==== AWS Lambda
+
+The application must extend
+`com.amazon.speech.speechlet.lambda.SpeechletRequestStreamHandler`.
+The zero-arg constructor of the subclass must pass the application's
+`Speechlet` implementation and the corresponding skill id to the
+constructor of the `SpeechletRequestStreamHandler` superclass. For
+example:
+
+The `ask/speechlet-lambas` task automates all of this transparently,
+based on configuration information specified in `speechlets.edn`. It
+creates and aot-compiles gen-class code like the following:
+
+[source,clojure]
+----
+(ns speechlethandlerssgen1410)
+(gen-class :name helloworld.speechlet.handler
+           :extends com.amazon.speech.speechlet.lambda.SpeechletRequestStreamHandler
+           :init init
+           :constructors {[] [com.amazon.speech.speechlet.Speechlet, java.util.Set]})
+(defn -init []
+  [ [(new hello.speechlet) #{"...alexa skill application id goes here..."}] []])
+----
+
+
+==== GAE
+
+IMPORTANT: To target Google App Engine, use
+https://github.com/migae/boot-gae[boot-gae] in conjunction with
+`boot-ask`. The tasks in `boot-gae` will automatically configure the
+application for the GAE environment.
+
+The application must extend
+`com.amazon.speech.speechlet.servlet.SpeechletServlet`. When the
+servlet container instantiates it, the `setSpeechlet` method must be
+used to inject an instance of the application's subclass of
+`Speechlet`. `SpeechServlet` itself extends
+`javax.servlet.http.HttpServlet`, and contains an implementation of
+`doPost` that performs security checks and other administrative
+tasks, and then invokes the methods of the injected `Speechlet`.
+
+The `ask/speechlet-servlets` method does all of this automatically,
+based on configuration information specified in `speechlets.edn`. It
+creates and aot-compiles gen-class code like the following, one per
+speechlet:
+
+[source,clojure]
+----
+(ns hello.speechlet.servlet
+  (:gen-class :extends com.amazon.speech.speechlet.servlet.SpeechletServlet
+              :exposes-methods {setSpeechlet superSetSpeechlet}
+              :post-init initialize))
+(defn -superSetSpeechlet
+  [this speechlet]
+  (.setSpeechlet this speechlet))
+(defn -initialize
+  [this]
+  (let [classname (symbol "hello.speechlet") ;; using a string prevents transitive aot
+        speechlet (eval `(new ~classname))]
+    (-superSetSpeechlet this speechlet)))
+----
+
+NOTE: Speechlets running in a servlet environment obtain Alexa skill
+application IDs from the system property
+`com.amazon.speech.speechlet.servlet.supportedApplicationIds`; see
+https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/handling-requests-sent-by-alexa#verifying-that-the-request-is-intended-for-your-service[Verifying
+that the Request is Intended for Your Service].  `boot-gae` configures
+this automatically based on information specified in `speechlets.edn`.
+
+== deployment platforms
 
 Documentation:
 

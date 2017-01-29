@@ -22,9 +22,10 @@ local GAE dev server and get quasi-REPL interactivity.
 
 IMPORTANT: This documentation assumes some familiarity with Alexa
 skills development. If you're just getting started with Alexa, you
-should work through some of the examples at https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/using-the-alexa-skills-kit-samples[Using the Alexa Skills Kit Samples (Custom Skills)].  See for example
-https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/overviews/understanding-custom-skills[Understanding
-Custom Skills]
+should work through some of the examples at
+https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/using-the-alexa-skills-kit-samples[Using
+the Alexa Skills Kit Samples (Custom Skills)]. Then you'll see how
+easy things are with boot-ask in comparison.
 
 Not yet deployed to clojars.
 

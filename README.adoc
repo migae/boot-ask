@@ -217,7 +217,7 @@ Documentation:
 
 * link:doc/gae.adoc[Google App Engine]
 
-
+* *AWS Elastic Beanstalk* - future
 
 = testing
 
@@ -283,7 +283,7 @@ Then post your test JSON: `$ ./upload.sh testhello.json`
 * If you are developing for GAE, you can interactively test-and-dev;
   for details see link:doc/gae.adoc[Alexa/Clojure on GAE].
 
-=== amazon docs
+= amazon docs
 
 * https://developer.amazon.com/alexa-skills-kit[Alexa Skills Kit]
 
@@ -292,3 +292,5 @@ Then post your test JSON: `$ ./upload.sh testhello.json`
 * https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/alexa-skills-kit-interface-reference[JSON Interface Reference for Custom Skills]
 
 * https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/custom-standard-request-types-reference#intentrequest[Standard Request Types Reference]
+
+= troubleshooting

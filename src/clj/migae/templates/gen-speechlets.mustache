@@ -5,7 +5,7 @@
 {{#speechlets}}
 (gen-class :name {{ns}}
            :implements [com.amazon.speech.speechlet.Speechlet]
-	   :prefix {{prefix}}
+	   :prefix {{delegate.prefix}}
            :impl-ns {{delegate.ns}})
 
 {{/speechlets}}

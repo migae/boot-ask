@@ -3,7 +3,7 @@
 (ns {{gen-speechlet-handlers-ns}})
 
 {{#speechlets}}
-(gen-class :name {{lambda.handler.ns}}
+(gen-class :name {{skill.endpoint.lambda.handler.ns}}
            :extends com.amazon.speech.speechlet.lambda.SpeechletRequestStreamHandler
 	   :init init
 	   :constructors {[] [com.amazon.speech.speechlet.Speechlet, java.util.Set]})
@@ -11,6 +11,6 @@
 (defn -init []
   (println "HANDLER INIT")
   [ [(new {{ns}})
-     #{"{{skill-id}}"}] []])
+     #{"{{skill.id}}"}] []])
 
 {{/speechlets}}

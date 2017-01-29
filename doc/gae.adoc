@@ -1,0 +1,117 @@
+= Alexa/Clojure on GAE using boot-ask
+
+The `boot-ask` and https://github.com/migae/boot-gae[boot-gae] task
+libraries together make it easy to develop Alexa "skills" in Clojure,
+for deployment to Google App Engine.
+
+
+= interactive development
+
+If you follow the instructions for
+https://github.com/migae/boot-gae[boot-gae] you can test-and-develop
+your Alexa skill interactively, using the local GAE development
+server. If you were developing an ordinary webpage servlet, you the
+cycle would be:
+
+1. switch to editor and edit code
+2. save edits
+3. switch to browser
+4. reload page
+5. goto step 1
+
+The only difference with Alexa development is that instead of
+refreshing a web page, you will execute a shell script that sends a
+POST request to your SpeechletServlet.
+
+NOTE: Of course, you do not have to use a shell script; you could also
+write a webpage that would send the POST request, or configure your
+editor to do it.
+
+TODO: figure out how to make emacs do this.
+
+= security
+
+
+=== ssl configuration
+
+When you configure your Alexa skill, you have to select a "Certificate
+ for NA Endpoint".  Unless you've customized your GAE environment in
+ some way, you should choose:
+
+```
+ My development endpoint is a sub-domain of a domain that has a wildcard certificate from a certificate authority
+```
+
+
+=== authentication
+
+set `com.amazon.speech.speechlet.servlet.disableRequestSignatureCheck` to true to disable.
+
+
+=== skill id verification
+
+* com.amazon.speech.speechlet.servlet.supportedApplicationIds
+
+Set this to a comma-separated list of skill ("application") IDs.
+
+WARNING: No spaces in the list!
+
+Omit it to disable app id verification.
+
+= testing
+
+Follow the general procedures outlined in the link:../README.adoc[main README].
+
+You can locally and interactively test:
+
+* application id verification
+
+== deployment
+
+System properties:
+
+* com.amazon.speech.speechlet.servlet.supportedApplicationIds
+* com.amazon.speech.speechlet.servlet.disableRequestSignatureCheck
+
+Note the module listed in the messages:
+
+[source,sh]
+----
+$ boot gae/deploy
+...
+Beginning interaction for module hello...
+...
+Update for module hello completed successfully.
+----
+
+This "module" is set by the `<module>` element in `appengine-web.xml`,
+which is generated from the `:gae` map in `build.boot`.
+
+== logging
+
+Example GAE application log message:
+
+[source,]
+----
+01:59:39.141
+[s~alexa-skills-kit/v1.398807232908308420].<stdout>: 2017-01-29 07:59:39,141  goodbye.speechlet.delegate
+INFO: onIntent requestId={}, sessionId={} testrequest123 SessionId.2359871f-62cd-43a1-aff8-3a952468a027
+----
+
+
+=== amazon docs
+
+* https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/handling-requests-sent-by-alexa[Handling Requests Sent by Alexa]
+
+* https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/alexa-skills-kit-interface-reference[JSON Interface Reference for Custom Skills]
+
+* https://developer.amazon.com/public/solutions/alexa/alexa-skills-kit/docs/custom-standard-request-types-reference#intentrequest[Standard Request Types Reference]
+
+
+= troubleshooting
+
+* check the module and note the way GAE constructs service URLs. Make
+  sure your Alexa skill is configured with the correct URL.
+
+* make sure your list of "application ids" is correct, and has no spaces (com.amazon.speech.speechlet.servlet.supportedApplicationIds)
+

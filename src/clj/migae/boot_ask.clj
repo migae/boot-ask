@@ -101,164 +101,29 @@
                                       :name name
                                       :ns ns})))))})
 
-(boot/deftask security
-  "Configure security for Alexa skill implementation"
-  ;; default is prod security:
-  ;;   omit com.amazon.speech.speechlet.servlet.disableRequestSignatureCheck
-  ;;   pull com.amazon.speech.speechlet.servlet.supportedApplicationIds from speechlets.edn
-  [i id-verification bool "enable supportedApplicationIds verification"
-   t test bool "test security - no sigcheck, not app id verification"
-   v verbose bool "Print trace messages."]
-  (let [workspace (boot/tmp-dir!)
-        prev-pre (atom nil)]
-    (comp
-     (boot/with-pre-wrap [fileset]
-       (let [boot-config-edn-files (->> (boot/fileset-diff @prev-pre fileset)
-                                        boot/input-files
-                                        (boot/by-re [(re-pattern (str boot-config-edn "$"))]))
-             boot-config-edn-f (condp = (count boot-config-edn-files)
-                                 0 (do (if verbose (util/info (str "Creating " boot-config-edn "\n")))
-                                       (io/file boot-config-edn)) ;; this creates a java.io.File
-                                 1 (first boot-config-edn-files)  ;; this is a boot.tmpdir.TmpFile
-                                 (throw (Exception.
-                                         (str "Only one " boot-config-edn " file allowed; found "
-                                              (count boot-config-edn-files)))))
-             boot-config-edn-map (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
-                                   (-> (boot/tmp-file boot-config-edn-f) slurp read-string)
-                                   {})
-             speechlets-edn-files (->> (boot/input-files fileset)
-                                       (boot/by-name [speechlets-edn]))
-             speechlets-edn-f (condp = (count speechlets-edn-files)
-                                0 (throw (Exception. (str "cannot find " speechlets-edn)))
-                                1 (first speechlets-edn-files)
-                                ;; > 1
-                                (throw (Exception.
-                                        (str "only one " speechlets-edn "file allowed; found "
-                                             (count speechlets-edn-files)))))
-             speechlets-config-map (-> (boot/tmp-file speechlets-edn-f) slurp read-string)
+(boot/deftask deploy-lambda
+  "Install service component"
+  [p project PROJECT sym "project name"
+   r version VERSION str "project version string"
+   v verbose bool "Print trace messages"]
+  (fn middleware [next-handler]
+    (fn handler [fileset]
+      (let [e (boot/get-env)
+            ;;target-dir (get-target-dir fileset false)
+            jarname (util/jarname project version)
+            ;;jarpath (str target-dir "/" jarname)
+            target-middleware (comp
+                               (builtin/pom)
+                               (builtin/uber)
+                               (builtin/jar)
+                               #_(install-jarfile-internal jarname))
+            target-handler (target-middleware next-handler)]
+        (target-handler fileset)))))
 
-             speechlets (:speechlets speechlets-config-map)
-             skill-ids (for [speechlet speechlets] (-> speechlet :skill :id))
-
-             ;; maybe inject skill ids into master config map
-             master-config (if test
-                             (-> boot-config-edn-map
-                                 (assoc-in [:system-properties]
-                                           (vec (into (:system-properties boot-config-edn-map)
-                                                      [{:name "com.amazon.speech.speechlet.servlet.disableRequestSignatureCheck"
-                                                        :value true}]))))
-                             (-> boot-config-edn-map
-                                 (assoc-in [:system-properties]
-                                           (vec (into (:system-properties boot-config-edn-map)
-                                                      [{:name "com.amazon.speech.speechlet.servlet.supportedApplicationIds"
-                                                        :value (str/join "," skill-ids)}])))))
-
-
-             master-config (with-out-str (pp/pprint master-config))
-             _ (println "master-config: " master-config)
-
-             boot-config-edn-out-file (io/file workspace
-                                               (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
-                                                 (boot/tmp-path boot-config-edn-f)
-                                                 boot-config-edn-f))]
-
-         (io/make-parents boot-config-edn-out-file)
-         (spit boot-config-edn-out-file master-config)
-
-         (reset! prev-pre
-               (-> fileset
-                   (boot/add-resource workspace)
-                   boot/commit!)))
-       @prev-pre))))
-
-(boot/deftask speechlets
-  "AOT-compile alexa Speechlets"
-  [k keep bool "keep intermediate .clj files"
-   ;; n gen-speechlets-ns NS str "namespace to generate and aot; default: 'speechlets"
-   v verbose bool "Print trace messages."]
-  (let [workspace (boot/tmp-dir!)
-        prev-pre (atom nil)
-        gen-speechlets-workspace (boot/tmp-dir!)
-        gen-speechlets-ns        (gensym "speechletsgen")
-        gen-speechlets-path      (str gen-speechlets-ns ".clj")]
-    (comp
-     (boot/with-pre-wrap [fileset]
-       ;; step 1: master config file
-       (let [boot-config-edn-files (->> (boot/fileset-diff @prev-pre fileset)
-                                        boot/input-files
-                                        (boot/by-re [(re-pattern (str boot-config-edn "$"))]))
-             boot-config-edn-f (condp = (count boot-config-edn-files)
-                                 0 (do (if verbose (util/info (str "Creating " boot-config-edn "\n")))
-                                       (io/file boot-config-edn)) ;; this creates a java.io.File
-                                 1 (first boot-config-edn-files)  ;; this is a boot.tmpdir.TmpFile
-                                 (throw (Exception.
-                                         (str "Only one " boot-config-edn " file allowed; found "
-                                              (count boot-config-edn-files)))))
-             boot-config-edn-map (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
-                                   (-> (boot/tmp-file boot-config-edn-f) slurp read-string)
-                                   {})]
-         ;; (println "boot-config-edn-map: " boot-config-edn-map)
-
-         (if (:speechlets boot-config-edn-map)
-           fileset
-           (do
-             ;; step 1: read the edn config file and construct map
-             (let [speechlets-edn-files (->> (boot/input-files fileset)
-                                             (boot/by-name [speechlets-edn]))
-                   speechlets-edn-f (condp = (count speechlets-edn-files)
-                                      0 (throw (Exception. (str "cannot find " speechlets-edn)))
-                                      1 (first speechlets-edn-files)
-                                      ;; > 1
-                                      (throw (Exception.
-                                              (str "only one " speechlets-edn "file allowed; found "
-                                                   (count speechlets-edn-files)))))
-                   speechlets-config-map (-> (boot/tmp-file speechlets-edn-f) slurp read-string)
-                   ;;speechlets-config-map (normalize-speechlet-configs speechlets-edn-map)
-
-                   ;; step 2:  inject speechlet config stanza to master config map
-                   ;; master-config (-> boot-config-edn-map
-                   ;;                   (assoc-in [:servlets] (concat (:servlets boot-config-edn-map)
-                   ;;                                                 (:speechlets speechlets-config-map))))
-                   ;; master-config (with-out-str (pp/pprint master-config))
-
-                   ;; step 3: create new master config file
-                   boot-config-edn-out-file (io/file workspace
-                                                     (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
-                                                       (boot/tmp-path boot-config-edn-f)
-                                                       boot-config-edn-f))
-
-                   ;; step 4: create speechlet generator
-                   gen-speechlets-content (stencil/render-file "migae/templates/gen-speechlets.mustache"
-                                                               (assoc speechlets-config-map
-                                                                      :gen-speechlets-ns
-                                                                      gen-speechlets-ns))
-                   gen-speechlets-out-file (doto (io/file gen-speechlets-workspace gen-speechlets-path)
-                                             io/make-parents)]
-               ;; (println "template: " gen-speechlets-content)
-               ;; step 5: write new files
-               (io/make-parents boot-config-edn-out-file)
-               ;; (spit boot-config-edn-out-file master-config)
-               (spit gen-speechlets-out-file gen-speechlets-content)))))
-
-       (if verbose (util/info (str "Configuring speechlets\n")))
-
-       ;; step 6: commit files to fileset
-       (reset! prev-pre
-               (-> fileset
-                   (boot/add-source workspace)
-                   (boot/add-source gen-speechlets-workspace)
-                   boot/commit!)))
-     (builtin/aot :namespace #{gen-speechlets-ns})
-
-     (if keep
-       identity
-       (builtin/sift :include #{(re-pattern (str gen-speechlets-ns ".*.class"))}
-                     :invert true))
-     (if keep
-       (comp
-        (builtin/sift :to-asset #{(re-pattern gen-speechlets-path)}))
-       identity)
-     )))
+(boot/deftask keep-config
+  "Retain master config file"
+  []
+  (builtin/sift :to-resource #{(re-pattern (str ".*" boot-config-edn))}))
 
 (boot/deftask lambdas
   "AOT-compile SpeechletRequestStreamHandler for Lambda skill implementation"
@@ -353,6 +218,76 @@
         (builtin/sift :to-asset #{(re-pattern gen-handlers-path)}))
        identity)
      )))
+
+(boot/deftask security
+  "Configure security for Alexa skill implementation"
+  ;; default is prod security:
+  ;;   omit com.amazon.speech.speechlet.servlet.disableRequestSignatureCheck
+  ;;   pull com.amazon.speech.speechlet.servlet.supportedApplicationIds from speechlets.edn
+  [i id-verification bool "enable supportedApplicationIds verification"
+   t test bool "test security - no sigcheck, not app id verification"
+   v verbose bool "Print trace messages."]
+  (let [workspace (boot/tmp-dir!)
+        prev-pre (atom nil)]
+    (comp
+     (boot/with-pre-wrap [fileset]
+       (let [boot-config-edn-files (->> (boot/fileset-diff @prev-pre fileset)
+                                        boot/input-files
+                                        (boot/by-re [(re-pattern (str boot-config-edn "$"))]))
+             boot-config-edn-f (condp = (count boot-config-edn-files)
+                                 0 (do (if verbose (util/info (str "Creating " boot-config-edn "\n")))
+                                       (io/file boot-config-edn)) ;; this creates a java.io.File
+                                 1 (first boot-config-edn-files)  ;; this is a boot.tmpdir.TmpFile
+                                 (throw (Exception.
+                                         (str "Only one " boot-config-edn " file allowed; found "
+                                              (count boot-config-edn-files)))))
+             boot-config-edn-map (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
+                                   (-> (boot/tmp-file boot-config-edn-f) slurp read-string)
+                                   {})
+             speechlets-edn-files (->> (boot/input-files fileset)
+                                       (boot/by-name [speechlets-edn]))
+             speechlets-edn-f (condp = (count speechlets-edn-files)
+                                0 (throw (Exception. (str "cannot find " speechlets-edn)))
+                                1 (first speechlets-edn-files)
+                                ;; > 1
+                                (throw (Exception.
+                                        (str "only one " speechlets-edn "file allowed; found "
+                                             (count speechlets-edn-files)))))
+             speechlets-config-map (-> (boot/tmp-file speechlets-edn-f) slurp read-string)
+
+             speechlets (:speechlets speechlets-config-map)
+             skill-ids (for [speechlet speechlets] (-> speechlet :skill :id))
+
+             ;; maybe inject skill ids into master config map
+             master-config (if test
+                             (-> boot-config-edn-map
+                                 (assoc-in [:system-properties]
+                                           (vec (into (:system-properties boot-config-edn-map)
+                                                      [{:name "com.amazon.speech.speechlet.servlet.disableRequestSignatureCheck"
+                                                        :value true}]))))
+                             (-> boot-config-edn-map
+                                 (assoc-in [:system-properties]
+                                           (vec (into (:system-properties boot-config-edn-map)
+                                                      [{:name "com.amazon.speech.speechlet.servlet.supportedApplicationIds"
+                                                        :value (str/join "," skill-ids)}])))))
+
+
+             master-config (with-out-str (pp/pprint master-config))
+             ;; _ (println "master-config: " master-config)
+
+             boot-config-edn-out-file (io/file workspace
+                                               (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
+                                                 (boot/tmp-path boot-config-edn-f)
+                                                 boot-config-edn-f))]
+
+         (io/make-parents boot-config-edn-out-file)
+         (spit boot-config-edn-out-file master-config)
+
+         (reset! prev-pre
+               (-> fileset
+                   (boot/add-resource workspace)
+                   boot/commit!)))
+       @prev-pre))))
 
 (boot/deftask servlets
   "AOT-compile SpeechletServlets"
@@ -487,3 +422,93 @@
        (builtin/sift :to-asset #{(re-pattern (str #_gen-servlets-path ".*"))})
        identity)
      )))
+
+(boot/deftask speechlets
+  "AOT-compile alexa Speechlets"
+  [k keep bool "keep intermediate .clj files"
+   ;; n gen-speechlets-ns NS str "namespace to generate and aot; default: 'speechlets"
+   v verbose bool "Print trace messages."]
+  (let [workspace (boot/tmp-dir!)
+        prev-pre (atom nil)
+        gen-speechlets-workspace (boot/tmp-dir!)
+        gen-speechlets-ns        (gensym "speechletsgen")
+        gen-speechlets-path      (str gen-speechlets-ns ".clj")]
+    (comp
+     (boot/with-pre-wrap [fileset]
+       ;; step 1: master config file
+       (let [boot-config-edn-files (->> (boot/fileset-diff @prev-pre fileset)
+                                        boot/input-files
+                                        (boot/by-re [(re-pattern (str boot-config-edn "$"))]))
+             boot-config-edn-f (condp = (count boot-config-edn-files)
+                                 0 (do (if verbose (util/info (str "Creating " boot-config-edn "\n")))
+                                       (io/file boot-config-edn)) ;; this creates a java.io.File
+                                 1 (first boot-config-edn-files)  ;; this is a boot.tmpdir.TmpFile
+                                 (throw (Exception.
+                                         (str "Only one " boot-config-edn " file allowed; found "
+                                              (count boot-config-edn-files)))))
+             boot-config-edn-map (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
+                                   (-> (boot/tmp-file boot-config-edn-f) slurp read-string)
+                                   {})]
+         ;; (println "boot-config-edn-map: " boot-config-edn-map)
+
+         (if (:speechlets boot-config-edn-map)
+           fileset
+           (do
+             ;; step 1: read the edn config file and construct map
+             (let [speechlets-edn-files (->> (boot/input-files fileset)
+                                             (boot/by-name [speechlets-edn]))
+                   speechlets-edn-f (condp = (count speechlets-edn-files)
+                                      0 (throw (Exception. (str "cannot find " speechlets-edn)))
+                                      1 (first speechlets-edn-files)
+                                      ;; > 1
+                                      (throw (Exception.
+                                              (str "only one " speechlets-edn "file allowed; found "
+                                                   (count speechlets-edn-files)))))
+                   speechlets-config-map (-> (boot/tmp-file speechlets-edn-f) slurp read-string)
+                   ;;speechlets-config-map (normalize-speechlet-configs speechlets-edn-map)
+
+                   ;; step 2:  inject speechlet config stanza to master config map
+                   ;; master-config (-> boot-config-edn-map
+                   ;;                   (assoc-in [:servlets] (concat (:servlets boot-config-edn-map)
+                   ;;                                                 (:speechlets speechlets-config-map))))
+                   ;; master-config (with-out-str (pp/pprint master-config))
+
+                   ;; step 3: create new master config file
+                   boot-config-edn-out-file (io/file workspace
+                                                     (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
+                                                       (boot/tmp-path boot-config-edn-f)
+                                                       boot-config-edn-f))
+
+                   ;; step 4: create speechlet generator
+                   gen-speechlets-content (stencil/render-file "migae/templates/gen-speechlets.mustache"
+                                                               (assoc speechlets-config-map
+                                                                      :gen-speechlets-ns
+                                                                      gen-speechlets-ns))
+                   gen-speechlets-out-file (doto (io/file gen-speechlets-workspace gen-speechlets-path)
+                                             io/make-parents)]
+               ;; (println "template: " gen-speechlets-content)
+               ;; step 5: write new files
+               (io/make-parents boot-config-edn-out-file)
+               ;; (spit boot-config-edn-out-file master-config)
+               (spit gen-speechlets-out-file gen-speechlets-content)))))
+
+       (if verbose (util/info (str "Configuring speechlets\n")))
+
+       ;; step 6: commit files to fileset
+       (reset! prev-pre
+               (-> fileset
+                   (boot/add-source workspace)
+                   (boot/add-source gen-speechlets-workspace)
+                   boot/commit!)))
+     (builtin/aot :namespace #{gen-speechlets-ns})
+
+     (if keep
+       identity
+       (builtin/sift :include #{(re-pattern (str gen-speechlets-ns ".*.class"))}
+                     :invert true))
+     (if keep
+       (comp
+        (builtin/sift :to-asset #{(re-pattern gen-speechlets-path)}))
+       identity)
+     )))
+

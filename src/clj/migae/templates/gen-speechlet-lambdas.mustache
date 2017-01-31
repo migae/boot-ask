@@ -9,8 +9,7 @@
 	   :constructors {[] [com.amazon.speech.speechlet.Speechlet, java.util.Set]})
 
 (defn -init []
-  (println "HANDLER INIT")
-  [ [(new {{ns}})
+  [ [(new {{skill.ns}})
      #{"{{skill.id}}"}] []])
 
 {{/speechlets}}

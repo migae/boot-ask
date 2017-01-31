@@ -260,7 +260,7 @@
        identity)
      )))
 
-(boot/deftask speechlet-lambdas
+(boot/deftask lambdas
   "AOT-compile SpeechletRequestStreamHandler for Lambda skill implementation"
   [k keep bool "keep intermediate .clj files"
    ;; n gen-speechlets-ns NS str "namespace to generate and aot; default: 'speechlets"
@@ -354,7 +354,7 @@
        identity)
      )))
 
-(boot/deftask speechlet-servlets
+(boot/deftask servlets
   "AOT-compile SpeechletServlets"
   [k keep bool "keep intermediate .clj files"
    ;; n gen-speechlets-ns NS str "namespace to generate and aot; default: 'speechlets"

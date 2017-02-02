@@ -36,8 +36,8 @@
 (defn ns->path
   [n]
   (let [nss (str n)
-        nspath (str (-> nss (str/replace \- \_) (str/replace "." "/")) ".clj")]
-    (println "nspath: " nspath)
+        nspath (str (-> nss (str/replace \- \_) (str/replace "." "/")))]
+    ;; (println "nspath: " nspath)
     nspath))
 
 ;; master connfig file
@@ -92,14 +92,17 @@
   {:speechlets
    (vec (flatten (for [config (:speechlets configs)]
                    ;;(println "CONFIG: " config)
-                     (let [urls (into [] (for [url (-> config :servlet :urls)]
+                     (let [urls (into '() (for [url (-> config :servlet :urls)]
                                            {:url (str url)}))
                            name (-> config :skill :name)
-                           ns (if (:servlet config) (-> config :servlet :ns) (:ns config)) ]
+                           ;; ns (if (:servlet config) (-> config :servlet :ns) (:ns config))
+                           ]
                        ;; (println "URLS: " urls)
-                       (merge config {:urls urls
+                       (merge config {:urls [{:path (-> config :servlet :url :path)
+                                              :name (-> config :skill :name)}]
                                       :name name
-                                      :ns ns})))))})
+                                      ;; :ns ns
+                                      })))))})
 
 (boot/deftask deploy-lambda
   "Install service component"
@@ -132,10 +135,8 @@
    v verbose bool "Print trace messages."]
   (let [workspace (boot/tmp-dir!)
         prev-pre (atom nil)
-
-        gen-handlers-workspace (boot/tmp-dir!)
-        gen-handlers-ns        (gensym "speechlethandlerssgen")
-        gen-handlers-path      (str gen-handlers-ns ".clj")]
+        gen-handlers-workspace (boot/tmp-dir!)]
+    (if verbose (util/info (str "Configuring speechlet lambda handlers\n")))
     (comp
      (boot/with-pre-wrap [fileset]
        ;; step 1: master config file
@@ -180,44 +181,107 @@
                    boot-config-edn-out-file (io/file workspace
                                                      (if (instance? boot.tmpdir.TmpFile boot-config-edn-f)
                                                        (boot/tmp-path boot-config-edn-f)
-                                                       boot-config-edn-f))
+                                                       boot-config-edn-f))]
 
-                   ;; step 4: create speechlet generator
-                   gen-handlers-content (stencil/render-file
-                                         "migae/templates/gen-speechlet-lambdas.mustache"
-                                         (assoc speechlets-config-map
-                                                :gen-speechlet-handlers-ns
-                                                gen-handlers-ns
-                                                :handler-ns
-                                                (-> speechlets-config-map :lambda :handler :ns)))
-                   gen-handlers-out-file (doto (io/file gen-handlers-workspace gen-handlers-path)
-                                             io/make-parents)]
-               ;; (println "template: " gen-handlers-content)
-               ;; step 5: write new files
+               ;; step 4: for each speechlet, generate the implementation
+               ;;(println "speechlets map: " (:speechlets speechlets-config-map))
+               (doseq [speechlet (filter #(:lambda %) (:speechlets speechlets-config-map))]
+                 (let [gen-handler-ns (-> speechlet :lambda :ns)
+                       _ (println "handler ns: " gen-handler-ns)
+                       gen-handlers-content (stencil/render-file
+                                             "migae/templates/gen-speechlet-lambdas.mustache"
+                                             speechlet)
+                                             ;; (assoc speechlet
+                                             ;;        :gen-speechlet-handler-ns
+                                             ;;        gen-handler-ns))
+                                             ;;        ;; :handler-ns
+                                             ;;        ;; (-> speechlets-config-map :lambda :handler :ns)))
+                       gen-handlers-path (str (ns->path (-> speechlet :lambda :ns)) ".cjl")
+                       gen-handlers-out-file (doto (io/file gen-handlers-workspace gen-handlers-path)
+                                               io/make-parents)]
+                   (spit gen-handlers-out-file gen-handlers-content)))
+
                (io/make-parents boot-config-edn-out-file)
                (spit boot-config-edn-out-file master-config)
-               (spit gen-handlers-out-file gen-handlers-content)))))
 
-       (if verbose (util/info (str "Configuring speechlet handlers\n")))
+               ;; step 6: commit files to fileset
+               (reset! prev-pre
+                       (if keep
+                       (-> fileset
+                           (boot/add-resource workspace)
+                           (boot/add-resource gen-handlers-workspace)
+                           boot/commit!)
+                       (-> fileset
+                           (boot/add-source workspace)
+                           (boot/add-source gen-handlers-workspace)
+                           boot/commit!)))
 
-       ;; step 6: commit files to fileset
-       (reset! prev-pre
-               (-> fileset
-                   (boot/add-source workspace)
-                   (boot/add-source gen-handlers-workspace)
-                   boot/commit!)))
+               (boot/empty-dir! workspace)
+               (let [pod-env (update-in (boot/get-env) [:directories] conj (.getPath workspace))
+                     compile-pod (future (pod/make-pod pod-env))
+                     tgt (.getPath workspace)]
+                 ;;(println "COMPILE PATH: " tgt)
+                 ;;(println "SPEECHLETS map: " (:speechlets speechlets-config-map))
+                 ;;(pod/with-eval-in @compile-pod
+                 (binding [*compile-path* tgt]
+                     (doseq [speechlet (filter #(:lambda %) (:speechlets speechlets-config-map))]
+                       (let [speechlet-ns (-> speechlet :lambda :ns)]
+                         (println (str "AOT compiling ns: " speechlet-ns))
+                         (compile speechlet-ns)))))
+               (reset! prev-pre
+                         (-> @prev-pre
+                             (boot/add-resource workspace)
+                             boot/commit!)))
+               )))
+       @prev-pre)
 
-     (builtin/aot :namespace #{gen-handlers-ns})
+     identity)))
 
-     (if keep
-       identity
-       (builtin/sift :include #{(re-pattern (str gen-handlers-ns ".*.class"))}
-                     :invert true))
-     (if keep
-       (comp
-        (builtin/sift :to-asset #{(re-pattern gen-handlers-path)}))
-       identity)
-     )))
+(boot/deftask lambda-update
+  ""
+  [p project PROJECT sym "project name"
+   r version VERSION str "project version string"
+   v verbose bool "Print trace messages."
+   x dry-run bool "dry run"
+   z zipfile ZIPFILE str "zipfile containing source"]
+  (if verbose (util/info (str "Updating lambda code\n")))
+  (boot/with-pre-wrap [fileset]
+    ;; step 0: read the edn files
+    (let [speechlets-edn-files (->> (boot/input-files fileset)
+                                 (boot/by-name [speechlets-edn]))]
+      (if (> (count speechlets-edn-files) 1)
+        (throw (Exception. "only one speechlets.edn file allowed")))
+      (if (= (count speechlets-edn-files) 0)
+        (throw (Exception. "cannot find speechlets.edn")))
+
+      (let [edn-speechlets-f (first speechlets-edn-files)
+            speechlet-configs (-> (boot/tmp-file edn-speechlets-f) slurp read-string)
+            ;;speechlet-configs (normalize-speechlet-configs speechlet-configs)
+            ]
+        ;; (println "new boot-config-edn: " master-config)
+        ;; (println "clj-speechlets: " clj-speechlets)
+
+        (doseq [speechlet (filter #(:lambda %) (:speechlets speechlet-configs))]
+          (let [zipfile (str "target/" (util/jarname project version))
+                raf (RandomAccessFile. zipfile "r")
+                channel (.getChannel raf)
+                buffer (.map channel FileChannel$MapMode/READ_ONLY 0 (.size channel))
+                ]
+            (if (or verbose dry-run)
+              (do
+                (println "name:   " (-> speechlet :lambda :name))
+                (println "zipfile: " zipfile)))
+            (if (not dry-run)
+              (let [client  (AWSLambdaClientBuilder/defaultClient)
+                    ^UpdateFunctionCodeResult
+                    result (.updateFunctionCode
+                            client
+                            (-> (UpdateFunctionCodeRequest.)
+                                (.withFunctionName (-> speechlet :lambda :name))
+                                (.withZipFile (.load buffer))))]
+                (println "RESULT: " (.toString result))
+                ))))))
+        fileset))
 
 (boot/deftask security
   "Configure security for Alexa skill implementation"
@@ -325,7 +389,6 @@
            fileset
            (do
              ;; step 1: read the servlets edn config file and construct map
-             ;; step 2:  inject speechlet config stanza to master config map
              (let [speechlets-edn-files (->> (boot/input-files fileset)
                                              (boot/by-name [speechlets-edn]))
                    speechlets-edn-f (condp = (count speechlets-edn-files)
@@ -335,15 +398,13 @@
                                       (throw (Exception.
                                               (str "only one " speechlets-edn "file allowed; found "
                                                    (count speechlets-edn-files)))))
-                   speechlets-config-map (-> (boot/tmp-file speechlets-edn-f) slurp read-string)
-                   ;; _ (println "speechlets-config-map: " speechlets-config-map)
+                   speechlets-edn-map (-> (boot/tmp-file speechlets-edn-f) slurp read-string)
+                   speechlets-config-map (normalize-speechlet-configs speechlets-edn-map)
 
-                   ;; this replaces ns with servlet.ns, for use by gae/webxml task
-                   servlets-config-map (normalize-speechlet-configs speechlets-config-map)
-
+                   ;; step 2:  inject speechlet config stanza to master config map
                    master-config (-> boot-config-edn-map
                                      (assoc-in [:servlets] (concat (:servlets boot-config-edn-map)
-                                                                   (:speechlets servlets-config-map))))
+                                                                   (:speechlets speechlets-config-map))))
                    master-config (with-out-str (pp/pprint master-config))
 
                    ;; step 3: create new master config file
@@ -353,17 +414,15 @@
                                                        boot-config-edn-f))]
 
                ;; step 4: for each speechlet, generate the implementation
-               ;; (println "speechlets map: " (:speechlets speechlets-config-map))
+               ;;(println "speechlets map: " (:speechlets speechlets-config-map))
                (doseq [speechlet (:speechlets speechlets-config-map)]
-                 ;; (println "SPEECHLET: " speechlet)
                  (let [gen-servlets-ns (-> speechlet :servlet :ns)
-                       ;;_ (println "gen-servlets-ns: " gen-servlets-ns)
                        gen-servlets-content (stencil/render-file
                                              "migae/templates/gen-speechlet-servlets.mustache"
                                              (assoc speechlet ;; s-config-map
                                                     :gen-speechlet-servlets-ns
                                                     gen-servlets-ns))
-                       gen-servlets-path (ns->path (-> speechlet :servlet :ns))
+                       gen-servlets-path (str (ns->path (-> speechlet :servlet :ns)) ".clj")
                        ;; _ (println "gen-servlets-path: " gen-servlets-path)
 
                        gen-servlets-out-file (doto (io/file gen-servlets-workspace gen-servlets-path)
@@ -407,21 +466,7 @@
                )))
        @prev-pre)
 
-     identity
-
-     #_(boot/with-pre-wrap [fileset]
-     ;(do (util/info (str "GEN SERVLETS NS: " gen-servlets-ns "\n")) identity)
-       #_(builtin/aot :namespace #{gen-servlets-ns})
-       identity)
-
-     #_(if keep
-       identity
-       (builtin/sift :include #{(re-pattern (str #_gen-servlets-path ".class"))}
-                     :invert true))
-     #_(if keep
-       (builtin/sift :to-asset #{(re-pattern (str #_gen-servlets-path ".*"))})
-       identity)
-     )))
+     identity)))
 
 (boot/deftask speechlets
   "AOT-compile alexa Speechlets"
@@ -429,6 +474,7 @@
    ;; n gen-speechlets-ns NS str "namespace to generate and aot; default: 'speechlets"
    v verbose bool "Print trace messages."]
   (let [workspace (boot/tmp-dir!)
+        intents-workspace (boot/tmp-dir!)
         prev-pre (atom nil)
         gen-speechlets-workspace (boot/tmp-dir!)
         gen-speechlets-ns        (gensym "speechletsgen")
@@ -486,9 +532,21 @@
                                                                       gen-speechlets-ns))
                    gen-speechlets-out-file (doto (io/file gen-speechlets-workspace gen-speechlets-path)
                                              io/make-parents)]
-               ;; (println "template: " gen-speechlets-content)
+
+               ;; step 5: create intents.clj files
+               (doseq [speechlet (:speechlets speechlets-config-map)]
+                 (let [intents-content (stencil/render-file
+                                        "migae/templates/intents.mustache"
+                                        speechlet)
+                       intents-out-file (doto (io/file intents-workspace
+                                                       (ns->path (:ns speechlet))
+                                                       "intents.clj")
+                                             io/make-parents)]
+                   (println "intents.clj: " intents-content)
+                   (spit intents-out-file intents-content)))
+
                ;; step 5: write new files
-               (io/make-parents boot-config-edn-out-file)
+               ;; (io/make-parents boot-config-edn-out-file)
                ;; (spit boot-config-edn-out-file master-config)
                (spit gen-speechlets-out-file gen-speechlets-content)))))
 
@@ -497,6 +555,7 @@
        ;; step 6: commit files to fileset
        (reset! prev-pre
                (-> fileset
+                   (boot/add-asset intents-workspace)
                    (boot/add-source workspace)
                    (boot/add-source gen-speechlets-workspace)
                    boot/commit!)))

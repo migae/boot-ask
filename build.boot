@@ -39,8 +39,8 @@
   "watch etc."
   [v verbose bool "verbose"]
   (comp (watch)
-        ;; (notify :audible true)
-        (javac)
+        (notify :audible true)
+        ;; (javac)
         (pom)
         (jar)
         (install)))

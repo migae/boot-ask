@@ -542,7 +542,6 @@
                                                        (ns->path (:ns speechlet))
                                                        "intents.clj")
                                              io/make-parents)]
-                   (println "intents.clj: " intents-content)
                    (spit intents-out-file intents-content)))
 
                ;; step 5: write new files
